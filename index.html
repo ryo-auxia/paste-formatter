@@ -275,7 +275,9 @@ marked.use({
       if (cap) {
         return { type: "del", raw: cap[0], text: cap[2], tokens: this.lexer.inlineTokens(cap[2]) };
       }
-      return false;
+      // Return undefined, NOT false: false makes marked fall back to the
+      // default del tokenizer, which matches single tildes again.
+      return undefined;
     }
   }
 });
