@@ -265,6 +265,21 @@
    ========================================================================= */
 marked.setOptions({ gfm: true, breaks: false });
 
+// GFM strikethrough in marked also matches SINGLE tildes, so "~8 ... ~19"
+// (two "approximately" tildes, common in agent output) turns into <del>.
+// Restrict strikethrough to the standard double-tilde form only.
+marked.use({
+  tokenizer: {
+    del(src) {
+      const cap = /^(~~)(?=[^\s~])([\s\S]*?[^\s~])\1(?=[^~]|$)/.exec(src);
+      if (cap) {
+        return { type: "del", raw: cap[0], text: cap[2], tokens: this.lexer.inlineTokens(cap[2]) };
+      }
+      return false;
+    }
+  }
+});
+
 /* =========================================================================
    Section 1: Cleanup pass
    Regex-based normalization applied to the RAW text before markdown parsing.
