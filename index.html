@@ -467,6 +467,16 @@ function buildSlackRichHtml(rootDom) {
   // Drop <hr>.
   root.querySelectorAll("hr").forEach(function (hr) { hr.remove(); });
 
+  // Slack's composer collapses <p> boundaries to single line breaks, gluing
+  // paragraphs together. Insert an explicit empty line between top-level
+  // blocks (<p><br></p> is how Slack's editor represents a blank line).
+  const blocksList = Array.prototype.slice.call(root.children);
+  for (let i = 1; i < blocksList.length; i++) {
+    const sep = document.createElement("p");
+    sep.appendChild(document.createElement("br"));
+    root.insertBefore(sep, blocksList[i]);
+  }
+
   return root.innerHTML;
 }
 
