@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paste Formatter</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --bg-panel: #f7f7f8;
+    --bg-input: #ffffff;
+    --border: #d9d9e0;
+    --text: #1a1a1c;
+    --text-dim: #6b6b76;
+    --accent: #2f6fed;
+    --accent-text: #ffffff;
+    --code-bg: #f3f3f3;
+    --toast-ok: #1f8a4c;
+    --toast-err: #c23b3b;
+    --shadow: 0 2px 10px rgba(0,0,0,0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161618;
+      --bg-panel: #1f1f23;
+      --bg-input: #1a1a1e;
+      --border: #34343c;
+      --text: #e8e8ec;
+      --text-dim: #9a9aa6;
+      --accent: #4d86f7;
+      --accent-text: #ffffff;
+      --code-bg: #26262b;
+      --toast-ok: #2fae62;
+      --toast-err: #e25a5a;
+      --shadow: 0 2px 12px rgba(0,0,0,0.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  header {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 650; }
+  header .hint { color: var(--text-dim); font-size: 12.5px; }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    background: var(--bg-panel);
+  }
+  .controls label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .controls select {
+    background: var(--bg-input);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 7px;
+    font-size: 13px;
+  }
+  .controls .spacer { flex: 1; }
+
+  .buttons {
+    display: flex;
+    gap: 8px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  button {
+    font: inherit;
+    background: var(--bg-input);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 11px;
+    cursor: pointer;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.2;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:active:not(:disabled) { background: var(--bg-panel); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button .kbd { font-size: 10.5px; color: var(--text-dim); margin-top: 2px; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.primary .kbd { color: rgba(255,255,255,0.8); }
+  .btn-clear { align-self: stretch; justify-content: center; align-items: center; }
+
+  .table-pick { display: inline-flex; align-items: center; gap: 4px; }
+
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    min-height: 0;
+  }
+  .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .pane.left { border-right: 1px solid var(--border); }
+  .pane .pane-label {
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    padding: 8px 18px 4px;
+  }
+  #input {
+    flex: 1;
+    width: 100%;
+    border: none;
+    resize: none;
+    background: var(--bg-input);
+    color: var(--text);
+    padding: 8px 18px 18px;
+    font-family: "Menlo", "Consolas", "SF Mono", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    outline: none;
+  }
+  #input.dragover { background: var(--bg-panel); box-shadow: inset 0 0 0 2px var(--accent); }
+  #preview {
+    flex: 1;
+    overflow: auto;
+    padding: 8px 18px 30px;
+    background: var(--bg);
+  }
+  #preview h1 { font-size: 1.6em; }
+  #preview h2 { font-size: 1.35em; }
+  #preview h3 { font-size: 1.15em; }
+  #preview pre {
+    background: var(--code-bg);
+    padding: 10px 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: "Menlo", "Consolas", monospace;
+    font-size: 12.5px;
+  }
+  #preview code {
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: "Menlo", "Consolas", monospace;
+    font-size: 0.9em;
+  }
+  #preview pre code { background: none; padding: 0; }
+  #preview table { border-collapse: collapse; margin: 8px 0; }
+  #preview th, #preview td { border: 1px solid var(--border); padding: 5px 9px; }
+  #preview blockquote {
+    margin: 8px 0;
+    padding-left: 12px;
+    border-left: 3px solid var(--border);
+    color: var(--text-dim);
+    font-style: italic;
+  }
+  #preview img { max-width: 100%; }
+  #preview .empty-hint { color: var(--text-dim); font-style: italic; }
+
+  #toast {
+    position: fixed;
+    top: 14px;
+    right: 16px;
+    padding: 9px 14px;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 13px;
+    box-shadow: var(--shadow);
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+    transition: opacity 0.18s, transform 0.18s;
+    z-index: 50;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+  #toast.ok { background: var(--toast-ok); }
+  #toast.err { background: var(--toast-err); }
+
+  /* offscreen scratch element for execCommand fallback */
+  #copyScratch {
+    position: fixed;
+    left: -9999px;
+    top: 0;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Paste Formatter</h1>
+    <span class="hint">Paste AI / Claude Code markdown, then copy in the format your paste target wants.</span>
+  </header>
+
+  <div class="controls">
+    <label><input type="checkbox" id="cleanupToggle"> Cleanup pass</label>
+    <label>Default target
+      <select id="defaultTarget">
+        <option value="docs">Docs / Gmail</option>
+        <option value="slackRich">Slack (rich)</option>
+        <option value="slackMrkdwn">Slack mrkdwn</option>
+        <option value="sheets">Sheets (table)</option>
+        <option value="plain">Plain text</option>
+        <option value="markdown">Markdown (Notion)</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="autoCopy"> Auto-copy on paste</label>
+    <span class="spacer"></span>
+  </div>
+
+  <div class="buttons">
+    <button id="btn-docs" data-mode="docs"><span>Docs / Gmail</span><span class="kbd">Ctrl+1</span></button>
+    <button id="btn-slackRich" data-mode="slackRich"><span>Slack (rich)</span><span class="kbd">Ctrl+2</span></button>
+    <button id="btn-slackMrkdwn" data-mode="slackMrkdwn"><span>Slack mrkdwn</span><span class="kbd">Ctrl+3</span></button>
+    <span class="table-pick">
+      <button id="btn-sheets" data-mode="sheets"><span>Sheets (table)</span><span class="kbd">Ctrl+4</span></button>
+      <select id="tablePick" title="Pick which table" style="display:none"></select>
+    </span>
+    <button id="btn-plain" data-mode="plain"><span>Plain text</span><span class="kbd">Ctrl+5</span></button>
+    <button id="btn-markdown" data-mode="markdown"><span>Markdown (Notion)</span><span class="kbd">Ctrl+6</span></button>
+    <span class="spacer"></span>
+    <button id="btn-clear" class="btn-clear"><span>Clear</span></button>
+  </div>
+
+  <main>
+    <div class="pane left">
+      <div class="pane-label">Input (paste or drop a .md / .txt file)</div>
+      <textarea id="input" placeholder="Paste markdown here..." spellcheck="false"></textarea>
+    </div>
+    <div class="pane right">
+      <div class="pane-label">Preview (Docs / Gmail rendering)</div>
+      <div id="preview"><span class="empty-hint">Rendered output appears here.</span></div>
+    </div>
+  </main>
+
+  <div id="toast"></div>
+  <div id="copyScratch" contenteditable="true"></div>
+
+<script>
+"use strict";
+
+/* =========================================================================
+   marked configuration
+   ========================================================================= */
+marked.setOptions({ gfm: true, breaks: false });
+
+/* =========================================================================
+   Section 1: Cleanup pass
+   Regex-based normalization applied to the RAW text before markdown parsing.
+   ========================================================================= */
+function cleanup(raw) {
+  let text = raw;
+
+  // Strip ANSI escape codes (CSI sequences and similar).
+  // eslint-disable-next-line no-control-regex
+  text = text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+  // eslint-disable-next-line no-control-regex
+  text = text.replace(/\x1b[@-Z\\-_]/g, "");
+
+  const lines = text.split("\n");
+  const out = [];
+
+  for (let line of lines) {
+    // Strip Claude Code tool-use markers at line start (and following whitespace).
+    // Keep the original leading indentation, drop marker + the gap after it.
+    line = line.replace(/^(\s*)[⏺⎿└├│╶╷─⤷]+[ \t]*/, "$1");
+
+    // Strip Read-tool line-number prefixes: "   123\t..." (cat -n style).
+    line = line.replace(/^\s*\d+\t/, "");
+    // Strip "123→" style prefixes (Read tool arrow).
+    line = line.replace(/^\s*\d+→/, "");
+
+    // Strip leading box-drawing characters used as progress-tree prefixes.
+    // Only strip when they sit at the very start (optionally after spaces),
+    // never touching content the user typed inside the line.
+    line = line.replace(/^(\s*)[─-╿⤷╶╷]+\s?/, "$1");
+
+    // Trim trailing whitespace.
+    line = line.replace(/[ \t]+$/, "");
+
+    out.push(line);
+  }
+
+  text = out.join("\n");
+
+  // Collapse 3+ consecutive blank lines into 2.
+  text = text.replace(/\n{3,}/g, "\n\n");
+
+  return text;
+}
+
+/* =========================================================================
+   Section 2: Parse - cleaned markdown -> HTML DOM
+   ========================================================================= */
+function getCleanedMarkdown() {
+  const raw = document.getElementById("input").value;
+  return cleanupEnabled() ? cleanup(raw) : raw;
+}
+
+// Returns a detached <div> whose children are the rendered block elements.
+function renderToDom(markdownText) {
+  const html = marked.parse(markdownText || "");
+  const doc = new DOMParser().parseFromString(
+    "<!DOCTYPE html><html><body>" + html + "</body></html>",
+    "text/html"
+  );
+  const container = document.createElement("div");
+  while (doc.body.firstChild) container.appendChild(doc.body.firstChild);
+  return container;
+}
+
+/* =========================================================================
+   Section 3: Shared helpers
+   ========================================================================= */
+function escapeHtml(s) {
+  return s.replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  });
+}
+
+function isElement(node) { return node.nodeType === 1; }
+function isText(node) { return node.nodeType === 3; }
+function tag(node) { return node.nodeName.toLowerCase(); }
+
+// Collapse inline whitespace the way HTML rendering would (for inline text runs).
+function normalizeInlineWhitespace(s) {
+  return s.replace(/\s+/g, " ");
+}
+
+/* ---- Table model extraction (shared by several serializers) ---- */
+// Returns { headers: [..], rows: [[..],..], cellNodes? } using a callback to
+// stringify each cell so different serializers can keep/strip inline formatting.
+function tableToMatrix(tableEl, cellToString) {
+  const matrix = [];
+  const rows = tableEl.querySelectorAll("tr");
+  rows.forEach(function (tr) {
+    const cells = [];
+    tr.querySelectorAll("th, td").forEach(function (cell) {
+      cells.push(cellToString(cell));
+    });
+    if (cells.length) matrix.push(cells);
+  });
+  return matrix;
+}
+
+// Space-align a matrix of strings into a monospace block (array of lines).
+function alignTable(matrix) {
+  if (!matrix.length) return [];
+  const cols = Math.max.apply(null, matrix.map(function (r) { return r.length; }));
+  const widths = [];
+  for (let c = 0; c < cols; c++) {
+    let w = 0;
+    for (let r = 0; r < matrix.length; r++) {
+      const v = matrix[r][c] != null ? matrix[r][c] : "";
+      if (v.length > w) w = v.length;
+    }
+    widths[c] = w;
+  }
+  const lines = [];
+  for (let r = 0; r < matrix.length; r++) {
+    const parts = [];
+    for (let c = 0; c < cols; c++) {
+      const v = matrix[r][c] != null ? matrix[r][c] : "";
+      parts.push(v + " ".repeat(widths[c] - v.length));
+    }
+    lines.push(parts.join("  ").replace(/\s+$/, ""));
+    // Insert a separator line after the header row.
+    if (r === 0) {
+      const sepParts = widths.map(function (w) { return "-".repeat(w); });
+      lines.push(sepParts.join("  ").replace(/\s+$/, ""));
+    }
+  }
+  return lines;
+}
+
+// Get verbatim text of a <pre>/<code> block (opaque - never transformed).
+function preText(preEl) {
+  // textContent preserves newlines and inner code text without HTML markup.
+  let t = preEl.textContent || "";
+  // Drop a single trailing newline that browsers often append.
+  t = t.replace(/\n$/, "");
+  return t;
+}
+
+/* =========================================================================
+   Section 4: Docs / Gmail HTML transform
+   Inline styles so Google Docs / Gmail keep them (they drop classes).
+   ========================================================================= */
+const MONO = "font-family:Menlo,Consolas,'SF Mono',monospace;";
+
+function buildDocsHtml(rootDom) {
+  // Work on a clone so we can mutate freely.
+  const root = rootDom.cloneNode(true);
+
+  // Inline-style code, pre, table, blockquote.
+  root.querySelectorAll("code").forEach(function (el) {
+    // Skip <code> directly inside <pre> (styled via the pre).
+    if (el.parentNode && tag(el.parentNode) === "pre") return;
+    el.setAttribute("style", MONO + "background:#f3f3f3;padding:1px 4px;border-radius:3px;font-size:90%;");
+  });
+  root.querySelectorAll("pre").forEach(function (el) {
+    el.setAttribute("style", MONO + "background:#f3f3f3;padding:10px 12px;border-radius:4px;white-space:pre-wrap;font-size:90%;");
+  });
+  root.querySelectorAll("table").forEach(function (el) {
+    el.setAttribute("style", "border-collapse:collapse;");
+    el.querySelectorAll("th,td").forEach(function (cell) {
+      const weight = tag(cell) === "th" ? "font-weight:bold;background:#f3f3f3;" : "";
+      cell.setAttribute("style", "border:1px solid #cccccc;padding:5px 9px;" + weight);
+    });
+  });
+  // Blockquote -> indented italic paragraph.
+  root.querySelectorAll("blockquote").forEach(function (el) {
+    el.setAttribute("style", "margin-left:1.5em;font-style:italic;color:#555555;");
+  });
+
+  return root.innerHTML;
+}
+
+/* =========================================================================
+   Section 5: Slack rich HTML transform
+   Slack's composer accepts a subset of HTML. Headings -> bold paragraph,
+   tables -> aligned <pre>, drop <hr>, keep inline marks and lists.
+   ========================================================================= */
+function buildSlackRichHtml(rootDom) {
+  const root = rootDom.cloneNode(true);
+
+  // Headings -> <p><strong>text</strong></p>
+  root.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach(function (h) {
+    const p = document.createElement("p");
+    const strong = document.createElement("strong");
+    while (h.firstChild) strong.appendChild(h.firstChild);
+    p.appendChild(strong);
+    h.parentNode.replaceChild(p, h);
+  });
+
+  // Tables -> <pre> with space-aligned columns.
+  root.querySelectorAll("table").forEach(function (t) {
+    const matrix = tableToMatrix(t, function (cell) {
+      return normalizeInlineWhitespace((cell.textContent || "").trim());
+    });
+    const pre = document.createElement("pre");
+    pre.textContent = alignTable(matrix).join("\n");
+    t.parentNode.replaceChild(pre, t);
+  });
+
+  // Drop <hr>.
+  root.querySelectorAll("hr").forEach(function (hr) { hr.remove(); });
+
+  return root.innerHTML;
+}
+
+/* =========================================================================
+   Section 6: Slack mrkdwn serializer (recursive DOM walk)
+   ========================================================================= */
+function serializeSlack(rootDom) {
+  const blocks = [];
+
+  function inline(node) {
+    if (isText(node)) return node.textContent;
+    if (!isElement(node)) return "";
+    const t = tag(node);
+    switch (t) {
+      case "strong": case "b": return "*" + childrenInline(node) + "*";
+      case "em": case "i": return "_" + childrenInline(node) + "_";
+      case "del": case "s": case "strike": return "~" + childrenInline(node) + "~";
+      case "code": return "`" + (node.textContent || "") + "`";
+      case "br": return "\n";
+      case "a": {
+        const text = childrenInline(node).trim();
+        const href = node.getAttribute("href") || "";
+        if (!href) return text;
+        if (text === href || !text) return href;
+        return text + " (" + href + ")";
+      }
+      default: return childrenInline(node);
+    }
+  }
+  function childrenInline(node) {
+    let s = "";
+    node.childNodes.forEach(function (c) { s += inline(c); });
+    return s;
+  }
+
+  function list(node, ordered, depth) {
+    const indent = "    ".repeat(depth); // 4-space indent per nesting level
+    let n = 1;
+    node.childNodes.forEach(function (li) {
+      if (!isElement(li) || tag(li) !== "li") return;
+      const marker = ordered ? (n + ". ") : "• ";
+      const text = liInline(li);
+      blocks_push_raw(indent + marker + text);
+      // Nested lists inside this li.
+      li.childNodes.forEach(function (c) {
+        if (isElement(c) && (tag(c) === "ul" || tag(c) === "ol")) {
+          list(c, tag(c) === "ol", depth + 1);
+        }
+      });
+      n++;
+    });
+  }
+  // Inline content of an <li> excluding nested lists.
+  function liInline(li) {
+    let s = "";
+    li.childNodes.forEach(function (c) {
+      if (isElement(c) && (tag(c) === "ul" || tag(c) === "ol")) return;
+      s += inline(c);
+    });
+    return normalizeInlineWhitespace(s).trim();
+  }
+
+  // Buffer raw lines for list items so they group without blank lines.
+  let listBuffer = null;
+  function blocks_push_raw(line) {
+    if (listBuffer === null) listBuffer = [];
+    listBuffer.push(line);
+  }
+  function flushList() {
+    if (listBuffer && listBuffer.length) blocks.push(listBuffer.join("\n"));
+    listBuffer = null;
+  }
+
+  function block(node) {
+    if (isText(node)) {
+      const txt = node.textContent.trim();
+      if (txt) { flushList(); blocks.push(normalizeInlineWhitespace(txt)); }
+      return;
+    }
+    if (!isElement(node)) return;
+    const t = tag(node);
+    switch (t) {
+      case "h1": case "h2": case "h3": case "h4": case "h5": case "h6":
+        flushList();
+        blocks.push("*" + normalizeInlineWhitespace(childrenInline(node)).trim() + "*");
+        break;
+      case "p":
+        flushList();
+        blocks.push(normalizeInlineWhitespace(childrenInline(node)).trim());
+        break;
+      case "ul": list(node, false, 0); flushList(); break;
+      case "ol": list(node, true, 0); flushList(); break;
+      case "pre":
+        flushList();
+        blocks.push("```\n" + preText(node) + "\n```");
+        break;
+      case "blockquote": {
+        flushList();
+        // Each line prefixed with "> ".
+        const inner = serializeSlack(node).trim();
+        const quoted = inner.split("\n").map(function (l) { return "> " + l; }).join("\n");
+        blocks.push(quoted);
+        break;
+      }
+      case "table": {
+        flushList();
+        const matrix = tableToMatrix(node, function (cell) {
+          return normalizeInlineWhitespace((cell.textContent || "").trim());
+        });
+        blocks.push("```\n" + alignTable(matrix).join("\n") + "\n```");
+        break;
+      }
+      case "hr":
+        flushList();
+        blocks.push("—".repeat(20));
+        break;
+      default:
+        // Unknown block container - recurse into children.
+        node.childNodes.forEach(block);
+    }
+  }
+
+  rootDom.childNodes.forEach(block);
+  flushList();
+  return blocks.join("\n\n");
+}
+
+/* =========================================================================
+   Section 7: Plain text serializer (recursive DOM walk, no markdown syntax)
+   ========================================================================= */
+function serializePlain(rootDom) {
+  const blocks = [];
+  let listBuffer = null;
+
+  function inline(node) {
+    if (isText(node)) return node.textContent;
+    if (!isElement(node)) return "";
+    const t = tag(node);
+    if (t === "br") return "\n";
+    if (t === "a") {
+      const text = childrenInline(node).trim();
+      const href = node.getAttribute("href") || "";
+      if (!href) return text;
+      if (text === href || !text) return href;
+      return text + " (" + href + ")";
+    }
+    // bold/italic/strike/code markers stripped to text.
+    return childrenInline(node);
+  }
+  function childrenInline(node) {
+    let s = "";
+    node.childNodes.forEach(function (c) { s += inline(c); });
+    return s;
+  }
+
+  function flushList() {
+    if (listBuffer && listBuffer.length) blocks.push(listBuffer.join("\n"));
+    listBuffer = null;
+  }
+  function pushListLine(line) {
+    if (listBuffer === null) listBuffer = [];
+    listBuffer.push(line);
+  }
+
+  function list(node, ordered, depth) {
+    const indent = "  ".repeat(depth); // 2-space indent per nesting level
+    let n = 1;
+    node.childNodes.forEach(function (li) {
+      if (!isElement(li) || tag(li) !== "li") return;
+      const marker = ordered ? (n + ". ") : "- ";
+      pushListLine(indent + marker + liInline(li));
+      li.childNodes.forEach(function (c) {
+        if (isElement(c) && (tag(c) === "ul" || tag(c) === "ol")) {
+          list(c, tag(c) === "ol", depth + 1);
+        }
+      });
+      n++;
+    });
+  }
+  function liInline(li) {
+    let s = "";
+    li.childNodes.forEach(function (c) {
+      if (isElement(c) && (tag(c) === "ul" || tag(c) === "ol")) return;
+      s += inline(c);
+    });
+    return normalizeInlineWhitespace(s).trim();
+  }
+
+  function block(node) {
+    if (isText(node)) {
+      const txt = node.textContent.trim();
+      if (txt) { flushList(); blocks.push(normalizeInlineWhitespace(txt)); }
+      return;
+    }
+    if (!isElement(node)) return;
+    const t = tag(node);
+    switch (t) {
+      case "h1": case "h2": case "h3": case "h4": case "h5": case "h6":
+        flushList();
+        blocks.push(normalizeInlineWhitespace(childrenInline(node)).trim());
+        break;
+      case "p":
+        flushList();
+        blocks.push(normalizeInlineWhitespace(childrenInline(node)).trim());
+        break;
+      case "ul": list(node, false, 0); flushList(); break;
+      case "ol": list(node, true, 0); flushList(); break;
+      case "pre":
+        flushList();
+        blocks.push(preText(node)); // verbatim
+        break;
+      case "blockquote": {
+        flushList();
+        const inner = serializePlain(node).trim();
+        const quoted = inner.split("\n").map(function (l) { return "  " + l; }).join("\n");
+        blocks.push(quoted);
+        break;
+      }
+      case "table": {
+        flushList();
+        const matrix = tableToMatrix(node, function (cell) {
+          return normalizeInlineWhitespace((cell.textContent || "").trim());
+        });
+        blocks.push(alignTable(matrix).join("\n"));
+        break;
+      }
+      case "hr":
+        flushList();
+        blocks.push("—".repeat(20));
+        break;
+      default:
+        node.childNodes.forEach(block);
+    }
+  }
+
+  rootDom.childNodes.forEach(block);
+  flushList();
+  return blocks.join("\n\n");
+}
+
+/* =========================================================================
+   Section 8: Sheets (single table) HTML + TSV
+   ========================================================================= */
+// Build a standalone <table> HTML preserving inline emphasis inside cells.
+function buildSheetTableHtml(tableEl) {
+  const clone = tableEl.cloneNode(true);
+  clone.setAttribute("style", "border-collapse:collapse;");
+  clone.querySelectorAll("th,td").forEach(function (cell) {
+    cell.setAttribute("style", "border:1px solid #cccccc;padding:4px 8px;");
+  });
+  // Strip attributes that Sheets does not need, keep inline tags (b/i/code).
+  return clone.outerHTML;
+}
+
+function buildSheetTsv(tableEl) {
+  const matrix = tableToMatrix(tableEl, function (cell) {
+    // TSV: strip inline formatting to text, neutralize tabs/newlines.
+    return (cell.textContent || "").replace(/\s+/g, " ").trim();
+  });
+  return matrix.map(function (row) { return row.join("\t"); }).join("\n");
+}
+
+/* =========================================================================
+   Section 9: Clipboard write (ClipboardItem with execCommand fallback)
+   ========================================================================= */
+async function writeClipboard(payload) {
+  // payload: { html?: string, text: string }
+  const hasHtml = typeof payload.html === "string";
+
+  if (navigator.clipboard && window.ClipboardItem) {
+    try {
+      const items = {};
+      items["text/plain"] = new Blob([payload.text], { type: "text/plain" });
+      if (hasHtml) items["text/html"] = new Blob([payload.html], { type: "text/html" });
+      await navigator.clipboard.write([new ClipboardItem(items)]);
+      return true;
+    } catch (e) {
+      // Fall through to legacy path.
+    }
+  }
+  return legacyCopy(payload, hasHtml);
+}
+
+function legacyCopy(payload, hasHtml) {
+  const scratch = document.getElementById("copyScratch");
+  if (hasHtml) {
+    scratch.innerHTML = payload.html;
+  } else {
+    scratch.textContent = payload.text;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(scratch);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  sel.removeAllRanges();
+  scratch.innerHTML = "";
+  return ok;
+}
+
+/* =========================================================================
+   Section 10: Mode dispatch - produce payload for a given target
+   ========================================================================= */
+function buildPayload(mode) {
+  const md = getCleanedMarkdown();
+  if (!md.trim()) return null;
+
+  const dom = renderToDom(md);
+
+  switch (mode) {
+    case "docs":
+      return { html: buildDocsHtml(dom), text: serializePlain(dom) };
+    case "slackRich":
+      return { html: buildSlackRichHtml(dom), text: serializeSlack(dom) };
+    case "slackMrkdwn":
+      return { text: serializeSlack(dom) };
+    case "sheets": {
+      const tables = dom.querySelectorAll("table");
+      if (!tables.length) return null;
+      const idx = currentTableIndex();
+      const t = tables[Math.min(idx, tables.length - 1)];
+      return { html: buildSheetTableHtml(t), text: buildSheetTsv(t) };
+    }
+    case "plain":
+      return { text: serializePlain(dom) };
+    case "markdown":
+      return { text: md };
+    default:
+      return null;
+  }
+}
+
+const MODE_LABELS = {
+  docs: "Docs / Gmail",
+  slackRich: "Slack (rich)",
+  slackMrkdwn: "Slack mrkdwn",
+  sheets: "Sheets (table)",
+  plain: "Plain text",
+  markdown: "Markdown",
+};
+
+async function runMode(mode) {
+  const payload = buildPayload(mode);
+  if (!payload) {
+    if (mode === "sheets") showToast("No table found in input", false);
+    else showToast("Nothing to copy", false);
+    return;
+  }
+  const ok = await writeClipboard(payload);
+  if (ok) showToast("Copied: " + MODE_LABELS[mode], true);
+  else showToast("Copy failed", false);
+}
+
+/* =========================================================================
+   Section 11: UI wiring
+   ========================================================================= */
+const LS = {
+  cleanup: "pf.cleanup",
+  defaultTarget: "pf.defaultTarget",
+  autoCopy: "pf.autoCopy",
+};
+
+const inputEl = document.getElementById("input");
+const previewEl = document.getElementById("preview");
+const cleanupEl = document.getElementById("cleanupToggle");
+const defaultTargetEl = document.getElementById("defaultTarget");
+const autoCopyEl = document.getElementById("autoCopy");
+const tablePickEl = document.getElementById("tablePick");
+const sheetsBtn = document.getElementById("btn-sheets");
+
+function cleanupEnabled() { return cleanupEl.checked; }
+function currentTableIndex() { return parseInt(tablePickEl.value || "0", 10) || 0; }
+
+/* ---- localStorage load (cleanup defaults ON) ---- */
+function loadPrefs() {
+  const c = localStorage.getItem(LS.cleanup);
+  cleanupEl.checked = c === null ? true : c === "1";
+  const dt = localStorage.getItem(LS.defaultTarget);
+  if (dt) defaultTargetEl.value = dt;
+  autoCopyEl.checked = localStorage.getItem(LS.autoCopy) === "1";
+}
+function savePrefs() {
+  localStorage.setItem(LS.cleanup, cleanupEl.checked ? "1" : "0");
+  localStorage.setItem(LS.defaultTarget, defaultTargetEl.value);
+  localStorage.setItem(LS.autoCopy, autoCopyEl.checked ? "1" : "0");
+}
+
+/* ---- Preview + table-picker refresh ---- */
+function refresh() {
+  const md = getCleanedMarkdown();
+  if (!md.trim()) {
+    previewEl.innerHTML = '<span class="empty-hint">Rendered output appears here.</span>';
+    updateTablePicker([]);
+    return;
+  }
+  const dom = renderToDom(md);
+  previewEl.innerHTML = buildDocsHtml(dom);
+  updateTablePicker(Array.prototype.slice.call(dom.querySelectorAll("table")));
+}
+
+function updateTablePicker(tables) {
+  if (!tables.length) {
+    sheetsBtn.disabled = true;
+    tablePickEl.style.display = "none";
+    tablePickEl.innerHTML = "";
+    return;
+  }
+  sheetsBtn.disabled = false;
+  if (tables.length > 1) {
+    const prev = tablePickEl.value;
+    tablePickEl.innerHTML = "";
+    tables.forEach(function (t, i) {
+      const firstHeader = t.querySelector("th, td");
+      const hint = firstHeader ? (firstHeader.textContent || "").trim().slice(0, 18) : "";
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = "Table " + (i + 1) + (hint ? " (" + hint + ")" : "");
+      tablePickEl.appendChild(opt);
+    });
+    if (prev && parseInt(prev, 10) < tables.length) tablePickEl.value = prev;
+    tablePickEl.style.display = "";
+  } else {
+    tablePickEl.style.display = "none";
+    tablePickEl.innerHTML = "";
+  }
+}
+
+/* ---- Toast ---- */
+let toastTimer = null;
+function showToast(msg, ok) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = "show " + (ok ? "ok" : "err");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.className = ""; }, 1700);
+}
+
+/* ---- Button wiring + default-target highlight ---- */
+const allButtons = document.querySelectorAll("button[data-mode]");
+allButtons.forEach(function (b) {
+  b.addEventListener("click", function () { runMode(b.dataset.mode); });
+});
+function highlightDefault() {
+  allButtons.forEach(function (b) {
+    b.classList.toggle("primary", b.dataset.mode === defaultTargetEl.value);
+  });
+}
+
+document.getElementById("btn-clear").addEventListener("click", function () {
+  inputEl.value = "";
+  refresh();
+  inputEl.focus();
+});
+
+/* ---- Input events ---- */
+inputEl.addEventListener("input", refresh);
+
+cleanupEl.addEventListener("change", function () { savePrefs(); refresh(); });
+defaultTargetEl.addEventListener("change", function () { savePrefs(); highlightDefault(); });
+autoCopyEl.addEventListener("change", savePrefs);
+
+/* ---- Auto-copy on paste ---- */
+inputEl.addEventListener("paste", function () {
+  if (!autoCopyEl.checked) return;
+  // Let the textarea update with pasted content first.
+  setTimeout(function () {
+    refresh();
+    runMode(defaultTargetEl.value);
+  }, 0);
+});
+
+/* ---- Keyboard shortcuts Cmd/Ctrl + 1..6 ---- */
+const ORDER = ["docs", "slackRich", "slackMrkdwn", "sheets", "plain", "markdown"];
+window.addEventListener("keydown", function (e) {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= 6) {
+    e.preventDefault();
+    runMode(ORDER[n - 1]);
+  }
+});
+
+/* ---- Drag and drop .md / .txt ---- */
+inputEl.addEventListener("dragover", function (e) {
+  e.preventDefault();
+  inputEl.classList.add("dragover");
+});
+inputEl.addEventListener("dragleave", function () { inputEl.classList.remove("dragover"); });
+inputEl.addEventListener("drop", function (e) {
+  e.preventDefault();
+  inputEl.classList.remove("dragover");
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!file) return;
+  if (!/\.(md|markdown|txt)$/i.test(file.name) && !/text/.test(file.type)) {
+    showToast("Drop a .md or .txt file", false);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function () {
+    inputEl.value = String(reader.result || "");
+    refresh();
+  };
+  reader.readAsText(file);
+});
+
+/* ---- Init ---- */
+loadPrefs();
+highlightDefault();
+refresh();
+</script>
+
+<!--
+  Later ideas (not yet implemented):
+  - Per-target preview tabs (show each target's exact output, not just the Docs flavor)
+  - Conversion history persisted in localStorage with quick re-copy
+  - Copy-all-tables mode (export every table at once, e.g. as multiple TSV blocks)
+-->
+</body>
+</html>
