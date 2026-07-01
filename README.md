@@ -22,7 +22,8 @@ A single-file web tool that converts AI agent (mainly Claude Code) markdown outp
 - Auto-copy on paste with a configurable default target
 - Keyboard shortcuts Ctrl+1..6
 - Drag-and-drop `.md` / `.txt` files
-- Dark / light theme via `prefers-color-scheme`
+- Dark / light theme: follows the OS by default, with an Auto / Light / Dark toggle in the top-right (persisted)
+- CJK-aware emphasis: `**bold**` / `*italic*` render correctly even next to Japanese punctuation (「」（）、), which stock CommonMark fails to bold
 - Settings persisted in localStorage
 
 ## Sending text from another tool

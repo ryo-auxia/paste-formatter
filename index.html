@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Paste Formatter</title>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script>
+  // Apply a forced light/dark theme before first paint to avoid a flash.
+  (function () {
+    try {
+      var t = localStorage.getItem("pf.theme");
+      if (t === "light" || t === "dark") {
+        document.documentElement.setAttribute("data-theme", t);
+        document.documentElement.style.colorScheme = t;
+      }
+    } catch (e) {}
+  })();
+</script>
 <style>
   :root {
     color-scheme: light dark;
@@ -21,8 +33,10 @@
     --toast-err: #c23b3b;
     --shadow: 0 2px 10px rgba(0,0,0,0.08);
   }
+  /* Dark palette. Applies automatically when the OS is dark (unless the user
+     has forced light) and always when the user forces dark via the toggle. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #161618;
       --bg-panel: #1f1f23;
       --bg-input: #1a1a1e;
@@ -36,6 +50,20 @@
       --toast-err: #e25a5a;
       --shadow: 0 2px 12px rgba(0,0,0,0.4);
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161618;
+    --bg-panel: #1f1f23;
+    --bg-input: #1a1a1e;
+    --border: #34343c;
+    --text: #e8e8ec;
+    --text-dim: #9a9aa6;
+    --accent: #4d86f7;
+    --accent-text: #ffffff;
+    --code-bg: #26262b;
+    --toast-ok: #2fae62;
+    --toast-err: #e25a5a;
+    --shadow: 0 2px 12px rgba(0,0,0,0.4);
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -59,6 +87,15 @@
   }
   header h1 { font-size: 18px; margin: 0; font-weight: 650; }
   header .hint { color: var(--text-dim); font-size: 12.5px; }
+  .theme-toggle {
+    margin-left: auto;
+    align-self: center;
+    flex-direction: row;
+    padding: 5px 12px;
+    font-size: 12.5px;
+    min-width: 64px;
+    justify-content: center;
+  }
 
   .controls {
     display: flex;
@@ -142,15 +179,15 @@
     outline: none;
   }
   #input.dragover { background: var(--bg-panel); box-shadow: inset 0 0 0 2px var(--accent); }
-  /* The preview represents Docs / Gmail output, which are white-background
-     apps. Render it as a white "paper" canvas with dark text in all themes so
-     it is WYSIWYG and the light code/table backgrounds stay readable. */
+  /* The preview follows the app theme (light or dark) for visual consistency.
+     The copied Docs / Gmail HTML still uses fixed light backgrounds so it
+     pastes correctly into those white-background apps - see buildDocsHtml. */
   #preview {
     flex: 1;
     overflow: auto;
     padding: 8px 18px 30px;
-    background: #ffffff;
-    color: #1a1a1c;
+    background: var(--bg);
+    color: var(--text);
   }
   #preview h1 { font-size: 1.6em; }
   #preview h2 { font-size: 1.35em; }
@@ -173,15 +210,16 @@
   #preview pre code { background: none; padding: 0; }
   #preview table { border-collapse: collapse; margin: 8px 0; }
   #preview th, #preview td { border: 1px solid var(--border); padding: 5px 9px; }
+  #preview th { background: var(--code-bg); }
   #preview blockquote {
     margin: 8px 0;
     padding-left: 12px;
-    border-left: 3px solid #d9d9e0;
-    color: #555555;
+    border-left: 3px solid var(--border);
+    color: var(--text-dim);
     font-style: italic;
   }
   #preview img { max-width: 100%; }
-  #preview .empty-hint { color: #8a8a94; font-style: italic; }
+  #preview .empty-hint { color: var(--text-dim); font-style: italic; }
 
   #toast {
     position: fixed;
@@ -215,6 +253,7 @@
   <header>
     <h1>Paste Formatter</h1>
     <span class="hint">Paste AI / Claude Code markdown, then copy in the format your paste target wants.</span>
+    <button id="themeToggle" class="theme-toggle" title="Switch theme (Auto / Light / Dark)">Auto</button>
   </header>
 
   <div class="controls">
@@ -344,9 +383,41 @@ function getCleanedMarkdown() {
   return cleanupEnabled() ? cleanup(raw) : raw;
 }
 
+// CommonMark's emphasis "flanking" rules classify CJK punctuation (「」（）、。
+// etc.) as punctuation and CJK letters as neither letter nor punctuation, so a
+// **bold** / *italic* run that touches CJK punctuation fails the flanking test
+// and the literal * / ** leak through (e.g. `「プル型」**で`). Convert emphasis
+// to explicit HTML here - marked passes HTML through - so CJK text emphasizes
+// correctly. Code is protected first so * / ** inside code are never touched.
+function cjkAwareEmphasis(md) {
+  const stash = [];
+  // Private-use-area chars fence each placeholder; they never occur in real
+  // text, so restored code can't be confused with surrounding content.
+  const keep = function (s) { stash.push(s); return "\uE000" + (stash.length - 1) + "\uE001"; };
+
+  // Protect fenced code, then inline code (order matters).
+  md = md.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, keep);
+  md = md.replace(/(`+)[\s\S]*?\1/g, keep);
+
+  // Strong: **...** and __...__ . Content may not start/end with whitespace,
+  // span a blank line, or contain the delimiter itself.
+  md = md.replace(/\*\*(?!\s)((?:(?!\*\*|\n\n)[\s\S])+?)(?<!\s)\*\*/g, "<strong>$1</strong>");
+  md = md.replace(/(^|[^\w_])__(?!\s)((?:(?!__|\n\n)[\s\S])+?)(?<!\s)__(?![\w_])/g, "$1<strong>$2</strong>");
+
+  // Emphasis: *...* and _..._ . The (?!\s) after the opening delimiter leaves
+  // list bullets ("* item" has a space after the star) alone, and the \w
+  // guards on _ leave identifiers like user_pseudo_id untouched.
+  md = md.replace(/(^|[^*])\*(?!\s)((?:(?!\*|\n\n)[\s\S])+?)(?<!\s)\*(?!\*)/g, "$1<em>$2</em>");
+  md = md.replace(/(^|[^\w_])_(?!\s)((?:(?!_|\n\n)[\s\S])+?)(?<!\s)_(?![\w_])/g, "$1<em>$2</em>");
+
+  // Restore protected code.
+  md = md.replace(/\uE000(\d+)\uE001/g, function (_, i) { return stash[+i]; });
+  return md;
+}
+
 // Returns a detached <div> whose children are the rendered block elements.
 function renderToDom(markdownText) {
-  const html = marked.parse(markdownText || "");
+  const html = marked.parse(cjkAwareEmphasis(markdownText || ""));
   const doc = new DOMParser().parseFromString(
     "<!DOCTYPE html><html><body>" + html + "</body></html>",
     "text/html"
@@ -872,6 +943,7 @@ const LS = {
   cleanup: "pf.cleanup",
   defaultTarget: "pf.defaultTarget",
   autoCopy: "pf.autoCopy",
+  theme: "pf.theme",
 };
 
 const inputEl = document.getElementById("input");
@@ -881,6 +953,27 @@ const defaultTargetEl = document.getElementById("defaultTarget");
 const autoCopyEl = document.getElementById("autoCopy");
 const tablePickEl = document.getElementById("tablePick");
 const sheetsBtn = document.getElementById("btn-sheets");
+const themeToggleEl = document.getElementById("themeToggle");
+
+/* ---- Theme: Auto (follow OS) / Light / Dark, persisted ---- */
+const THEME_ORDER = ["auto", "light", "dark"];
+function applyTheme(mode) {
+  const root = document.documentElement;
+  if (mode === "light" || mode === "dark") {
+    root.setAttribute("data-theme", mode);
+    root.style.colorScheme = mode;
+  } else {
+    root.removeAttribute("data-theme");
+    root.style.colorScheme = "light dark";
+  }
+  themeToggleEl.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+}
+themeToggleEl.addEventListener("click", function () {
+  const cur = localStorage.getItem(LS.theme) || "auto";
+  const next = THEME_ORDER[(THEME_ORDER.indexOf(cur) + 1) % THEME_ORDER.length];
+  localStorage.setItem(LS.theme, next);
+  applyTheme(next);
+});
 
 function cleanupEnabled() { return cleanupEl.checked; }
 function currentTableIndex() { return parseInt(tablePickEl.value || "0", 10) || 0; }
@@ -908,7 +1001,9 @@ function refresh() {
     return;
   }
   const dom = renderToDom(md);
-  previewEl.innerHTML = buildDocsHtml(dom);
+  // Preview uses plain rendered HTML so the theme-aware #preview styles apply.
+  // buildDocsHtml (fixed light styling) is reserved for the Docs clipboard.
+  previewEl.innerHTML = dom.innerHTML;
   updateTablePicker(Array.prototype.slice.call(dom.querySelectorAll("table")));
 }
 
@@ -1067,6 +1162,7 @@ function loadFromUrl() {
 
 /* ---- Init ---- */
 loadPrefs();
+applyTheme(localStorage.getItem(LS.theme) || "auto");
 highlightDefault();
 refresh();
 loadFromUrl();
