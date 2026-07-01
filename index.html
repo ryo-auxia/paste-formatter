@@ -1017,10 +1017,59 @@ inputEl.addEventListener("drop", function (e) {
   reader.readAsText(file);
 });
 
+/* ---- Receive text from another tool via the URL ----
+   Prefer the hash fragment (#text=...): it is never sent to any server, so
+   there is no server URL-length cap (GitHub Pages returns 414 past ~7KB of
+   query string) and the content stays out of request logs. A ?text= query is
+   supported too for small payloads. Optional &copy=<target> auto-copies on
+   load; &target=<t> sets the default. Params inside the hash are parsed as a
+   query string, e.g. #text=...&copy=docs */
+function loadFromUrl() {
+  const hash = location.hash ? location.hash.slice(1) : "";
+  const params = new URLSearchParams(hash || location.search.slice(1));
+
+  let text = params.get("text");
+  // Also allow the whole hash to be the raw (encoded) text, with no "text=" key.
+  if (text === null && hash && hash.indexOf("=") === -1) {
+    try { text = decodeURIComponent(hash); } catch (e) { text = hash; }
+  }
+  if (text === null) return;
+
+  inputEl.value = text;
+
+  const target = params.get("target");
+  if (target && MODE_LABELS[target]) {
+    defaultTargetEl.value = target;
+    highlightDefault();
+  }
+
+  refresh();
+
+  // Clear the URL so the content does not linger in the address bar.
+  try { history.replaceState(null, "", location.pathname); } catch (e) {}
+
+  // Optional auto-copy (&copy=<target>). Browsers block clipboard writes on
+  // page load unless the tab is focused / has a user gesture, so treat this as
+  // best-effort: on success show "Copied", otherwise show a non-alarming hint
+  // pointing at the keyboard shortcut (a keypress IS a valid gesture).
+  const copy = params.get("copy");
+  if (copy && MODE_LABELS[copy]) {
+    const payload = buildPayload(copy);
+    if (payload) {
+      const shortcut = "Ctrl+" + (ORDER.indexOf(copy) + 1);
+      writeClipboard(payload).then(function (ok) {
+        showToast(ok ? ("Copied: " + MODE_LABELS[copy])
+                     : ("Loaded. Press " + shortcut + " to copy " + MODE_LABELS[copy] + "."), true);
+      });
+    }
+  }
+}
+
 /* ---- Init ---- */
 loadPrefs();
 highlightDefault();
 refresh();
+loadFromUrl();
 </script>
 
 <!--
